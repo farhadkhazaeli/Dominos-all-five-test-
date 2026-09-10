@@ -10,7 +10,9 @@ class GameEngine {
   List<DominoTile> humanHand = [];
   List<DominoTile> opponentHand = [];
   List<DominoTile> bank = [];
-  List<DominoTile> board = [];
+
+  /// Tiles are stored in the exact orientation in which they appear on table.
+  List<PlacedTile> board = [];
 
   int? leftEnd;
   int? rightEnd;
@@ -43,7 +45,10 @@ class GameEngine {
     startRound(isFirstRound: true);
   }
 
-  void startRound({bool isFirstRound = false, bool previousRoundWasDraw = false}) {
+  void startRound({
+    bool isFirstRound = false,
+    bool previousRoundWasDraw = false,
+  }) {
     final tiles = _newSet()..shuffle(_random);
 
     humanHand = tiles.sublist(0, 7);
@@ -137,6 +142,7 @@ class GameEngine {
           resultingRightEnd: rightEnd!,
         ));
       }
+
       if (tile.matches(rightEnd!)) {
         moves.add(Move(
           tile: tile,
@@ -149,16 +155,22 @@ class GameEngine {
     return moves;
   }
 
-  /// Draw automatically until a legal tile exists or bank is empty.
-  /// Returns true if the player can now play.
+  /// Draw exactly one tile. UI can animate each individual draw.
+  DominoTile? drawOne(PlayerSide side) {
+    if (bank.isEmpty) return null;
+
+    final drawn = bank.removeAt(0);
+    if (side == PlayerSide.human) {
+      humanHand.add(drawn);
+    } else {
+      opponentHand.add(drawn);
+    }
+    return drawn;
+  }
+
   bool autoDrawUntilPlayable(PlayerSide side) {
     while (legalMoves(side).isEmpty && bank.isNotEmpty) {
-      final drawn = bank.removeAt(0);
-      if (side == PlayerSide.human) {
-        humanHand.add(drawn);
-      } else {
-        opponentHand.add(drawn);
-      }
+      drawOne(side);
     }
     return legalMoves(side).isNotEmpty;
   }
@@ -181,11 +193,30 @@ class GameEngine {
     hand.remove(move.tile);
 
     if (board.isEmpty) {
-      board.add(move.tile);
+      board.add(PlacedTile(
+        tile: move.tile,
+        leftValue: move.tile.a,
+        rightValue: move.tile.b,
+      ));
     } else if (move.side == EndSide.left) {
-      board.insert(0, move.tile);
+      final oldLeft = leftEnd!;
+      board.insert(
+        0,
+        PlacedTile(
+          tile: move.tile,
+          leftValue: move.tile.otherSide(oldLeft),
+          rightValue: oldLeft,
+        ),
+      );
     } else {
-      board.add(move.tile);
+      final oldRight = rightEnd!;
+      board.add(
+        PlacedTile(
+          tile: move.tile,
+          leftValue: oldRight,
+          rightValue: move.tile.otherSide(oldRight),
+        ),
+      );
     }
 
     leftEnd = move.resultingLeftEnd;
@@ -297,8 +328,9 @@ class GameEngine {
       humanScore >= targetScore || opponentScore >= targetScore;
 
   String get openEndsLabel {
-    if (leftEnd == null || rightEnd == null) return 'Open Ends: —';
+    if (leftEnd == null || rightEnd == null) return 'OPEN ENDS  —';
     final total = leftEnd! + rightEnd!;
-    return 'Open Ends: $leftEnd + $rightEnd = $total';
+    return 'OPEN ENDS   $leftEnd + $rightEnd = $total';
   }
 }
+

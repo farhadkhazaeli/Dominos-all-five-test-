@@ -641,11 +641,20 @@ class _GameScreenState extends State<GameScreen> {
     );
   }
 
-  /// Entire chain is always kept inside the visible board.
-  /// As the chain grows:
-  /// 1) tiles shrink gradually;
-  /// 2) rows are added;
-  /// 3) row direction alternates, creating a snake layout.
+
+  /// Draws the domino chain as one continuous physical path.
+  ///
+  /// When a horizontal run reaches the edge, the next REAL domino in the
+  /// chain turns vertically and becomes the bridge to the next row.
+  /// The following row continues in the opposite direction.
+  ///
+  ///   >>>>>>>>
+  ///          v
+  ///   <<<<<<<<
+  ///   v
+  ///   >>>>>>>>
+  ///
+  /// Every visible piece is an actual domino from engine.board.
   Widget _responsiveBoardChain() {
     if (engine.board.isEmpty) {
       return const Center(
@@ -662,93 +671,139 @@ class _GameScreenState extends State<GameScreen> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final n = engine.board.length;
+        final count = engine.board.length;
 
         const baseW = 62.0;
         const baseH = 38.0;
-        const gapX = 2.0;
-        const gapY = 5.0;
+        const horizontalPadding = 10.0;
 
         double scale = 1.0;
-        int perRow = 1;
-        int rows = 1;
+        int tilesPerRun = 2;
+        int rowCount = 1;
 
-        // Find the largest scale that fits both width and height.
-        for (double candidate = 1.0; candidate >= .50; candidate -= .03) {
+        // Largest scale that keeps the complete continuous chain on screen.
+        for (double candidate = 1.0; candidate >= .46; candidate -= .02) {
           final tileW = baseW * candidate;
           final tileH = baseH * candidate;
 
-          final possiblePerRow =
-              math.max(1, ((constraints.maxWidth + gapX) / (tileW + gapX)).floor());
+          final usableWidth =
+              math.max(1.0, constraints.maxWidth - horizontalPadding * 2);
 
-          final neededRows = (n / possiblePerRow).ceil();
+          final run = math.max(2, (usableWidth / tileW).floor());
 
-          final requiredH =
-              neededRows * tileH + math.max(0, neededRows - 1) * gapY;
+          // Every transition between rows consumes one real vertical tile.
+          final rows =
+              math.max(1, ((count + 1) / (run + 1)).ceil());
 
-          if (requiredH <= constraints.maxHeight) {
+          final requiredHeight =
+              tileH + math.max(0, rows - 1) * tileW;
+
+          if (requiredHeight <= constraints.maxHeight) {
             scale = candidate;
-            perRow = possiblePerRow;
-            rows = neededRows;
+            tilesPerRun = run;
+            rowCount = rows;
             break;
           }
         }
 
-        // Final safety fallback for very long chains.
         final tileW = baseW * scale;
-        perRow = math.max(
-          1,
-          ((constraints.maxWidth + gapX) / (tileW + gapX)).floor(),
-        );
-        rows = (n / perRow).ceil();
+        final tileH = baseH * scale;
 
-        final rowWidgets = <Widget>[];
+        final usableWidth =
+            math.max(1.0, constraints.maxWidth - horizontalPadding * 2);
 
-        for (int rowIndex = 0; rowIndex < rows; rowIndex++) {
-          final start = rowIndex * perRow;
-          final end = math.min(start + perRow, n);
+        tilesPerRun =
+            math.max(2, (usableWidth / tileW).floor());
 
-          final slice = engine.board.sublist(start, end);
-          final reverseRow = rowIndex.isOdd;
+        rowCount =
+            math.max(1, ((count + 1) / (tilesPerRun + 1)).ceil());
 
-          final visualTiles = reverseRow
-              ? slice.reversed.toList()
-              : slice;
+        final routeWidth = tilesPerRun * tileW;
+        final leftEdge = (constraints.maxWidth - routeWidth) / 2;
+        final rightEdge = leftEdge + routeWidth;
 
-          rowWidgets.add(
-            SizedBox(
-              height: baseH * scale + gapY,
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  for (final placed in visualTiles)
-                    SizedBox(
-                      width: baseW * scale + gapX,
-                      child: Center(
-                        child: _domino(
-                          // When a snake row reverses direction,
-                          // swap the two visible halves as well.
-                          left: reverseRow
-                              ? placed.rightValue
-                              : placed.leftValue,
-                          right: reverseRow
-                              ? placed.leftValue
-                              : placed.rightValue,
-                          scale: scale,
-                        ),
-                      ),
-                    ),
-                ],
+        final routeHeight =
+            tileH + math.max(0, rowCount - 1) * tileW;
+
+        final top =
+            math.max(0.0, (constraints.maxHeight - routeHeight) / 2);
+
+        final children = <Widget>[];
+
+        int boardIndex = 0;
+        int row = 0;
+
+        while (boardIndex < count) {
+          final movingRight = row.isEven;
+          final rowCenterY = top + tileH / 2 + row * tileW;
+
+          int usedInRun = 0;
+
+          // Horizontal portion of this row.
+          while (usedInRun < tilesPerRun && boardIndex < count) {
+            final placed = engine.board[boardIndex];
+
+            final centerX = movingRight
+                ? leftEdge + (usedInRun + .5) * tileW
+                : rightEdge - (usedInRun + .5) * tileW;
+
+            children.add(
+              Positioned(
+                left: centerX - tileW / 2,
+                top: rowCenterY - tileH / 2,
+                width: tileW,
+                height: tileH,
+                child: Center(
+                  child: _domino(
+                    left: movingRight
+                        ? placed.leftValue
+                        : placed.rightValue,
+                    right: movingRight
+                        ? placed.rightValue
+                        : placed.leftValue,
+                    scale: scale,
+                  ),
+                ),
+              ),
+            );
+
+            boardIndex++;
+            usedInRun++;
+          }
+
+          if (boardIndex >= count) break;
+
+          // This actual domino is the vertical turn into the next row.
+          final bridge = engine.board[boardIndex];
+          final bridgeCenterX = movingRight ? rightEdge : leftEdge;
+          final bridgeCenterY = rowCenterY + tileW / 2;
+
+          children.add(
+            Positioned(
+              left: bridgeCenterX - tileH / 2,
+              top: bridgeCenterY - tileW / 2,
+              width: tileH,
+              height: tileW,
+              child: Center(
+                child: Transform.rotate(
+                  angle: math.pi / 2,
+                  child: _domino(
+                    left: bridge.leftValue,
+                    right: bridge.rightValue,
+                    scale: scale,
+                  ),
+                ),
               ),
             ),
           );
+
+          boardIndex++;
+          row++;
         }
 
-        return Center(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: rowWidgets,
-          ),
+        return Stack(
+          clipBehavior: Clip.none,
+          children: children,
         );
       },
     );
@@ -1125,4 +1180,3 @@ class _FeltPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
-
